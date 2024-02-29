@@ -2,6 +2,8 @@
 !.vscode/tasks.json
 !.vscode/settings.json
 
+*.sln
+
 # Needless SDK's shit.
 bin/
 obj/
