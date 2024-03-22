@@ -17,6 +17,17 @@ using System.Collections.Generic;
 using System.Linq;
 using System.ComponentModel;
 using System.Threading;
+using Microsoft.VisualBasic;
+using System.Xml.Schema;
+
+
+/*
+ * TODO:
+ * 1. Good reporting/feedback
+ * 2. Proper parameter handling
+ * 3. Sensible defaults
+ * 4. When queue goes over 50
+ */
 
 /*
  * Must be unique per each script project.
@@ -170,17 +181,14 @@ namespace Proj2Assem
             }
         }
 
-        public Dictionary<string, int> GetComponents(string definition)
-        {
-            return blueprints[definition];
-        }
-
         public void AddComponents(Dictionary<string, int> addTo, Dictionary<string, int> addFrom, int times)
         {
+            if ( times == 0 ) return;
+
             foreach (KeyValuePair<string, int> component in addFrom)
             {
-                if (component.Key.Contains("EngineerPlushie") || component.Key.Contains("SabiroidPlushie")) // Plushie components can't be assembled
-                    continue;
+                if (component.Key.Contains("EngineerPlushie") || component.Key.Contains("SabiroidPlushie")) {// Plushie components can't be assembled
+                    continue;}
                 if (addTo.ContainsKey(component.Key))
                     addTo[component.Key] += component.Value * times;
                 else
@@ -195,7 +203,6 @@ namespace Proj2Assem
             char[] delimiters = new char[] { ',' };
             char[] remove = new char[] { '[', ']' };
             Dictionary<string, int> totalComponents = new Dictionary<string, int>();
-            Echo("totalcomponents length after init " + totalComponents.Count);
 
             foreach (var item in blocks)
             {
@@ -205,7 +212,7 @@ namespace Proj2Assem
                 string blockName = blockInfo[0].Replace(" ", ""); // data in blockDefinitionData is compressed removing spaces
                 int amount = Convert.ToInt32(blockInfo[1]);
 
-                AddComponents(totalComponents, GetComponents(blockName), amount);
+                AddComponents(totalComponents, blueprints[blockName], amount);
             }
 
             bool LargeGrid = projector.BlockDefinition.SubtypeId == "LargeProjector";
@@ -223,26 +230,13 @@ namespace Proj2Assem
                 armorType += "SmallHeavyBlockArmorBlock";
 
             int armors = projector.RemainingArmorBlocks;
-            AddComponents(totalComponents, GetComponents(armorType), armors);
-            Echo("totalcomponents length after processing is " + totalComponents.Count);
+
+            AddComponents(totalComponents, blueprints[armorType], armors);
 
             var compList = totalComponents.ToList();
-            Echo("complist length is " + compList.Count);
             compList.Sort((x, y) => string.Compare(x.Key, y.Key));
 
             return compList;
-        }
-
-        private void AddCountToDict<T>(Dictionary<T, int> dic, T key, int amount)
-        {
-            if (dic.ContainsKey(key))
-            {
-                dic[key] += amount;
-            }
-            else
-            {
-                dic[key] = amount;
-            }
         }
 
         private int GetCountFromDic<T>(Dictionary<T, int> dic, T key)
@@ -272,7 +266,10 @@ namespace Proj2Assem
                         {
                             if (item.Type.TypeId.Equals("MyObjectBuilder_Component"))
                             {
-                                AddCountToDict(componentAmounts, item.Type.SubtypeId, item.Amount.ToIntSafe());
+                                if (!componentAmounts.ContainsKey(item.Type.SubtypeId))
+                                    componentAmounts[item.Type.SubtypeId] = 0;
+                                
+                                componentAmounts[item.Type.SubtypeId] += item.Amount.ToIntSafe();
                             }
                         }
                     }
@@ -283,7 +280,11 @@ namespace Proj2Assem
             foreach (var comp in compList)
             {
                 string subTypeId = comp.Key.Replace("MyObjectBuilder_BlueprintDefinition/", "").Replace("Component", "");
-                ret.Add(new KeyValuePair<string, int>(comp.Key, Math.Max(0, comp.Value - GetCountFromDic(componentAmounts, subTypeId))));
+                if (componentAmounts.ContainsKey(subTypeId)) {
+                    var remainingAmount = comp.Value - componentAmounts[subTypeId];
+                    if (remainingAmount > 0)
+                        ret.Add(new KeyValuePair<string, int>(comp.Key, remainingAmount));
+                }
             }
             return ret;
         }
@@ -293,7 +294,7 @@ namespace Proj2Assem
         public void Main(string argument)
         {
             string projectorName = "Projector", assemblerName = "Assembler";
-            int staggeringFactor = 10; // set 1 to not stagger
+            int staggeringFactor = 1; // set 1 to not stagger
             bool fewFirst = true;
             lightArmor = true;
             bool onlyRemaining = false;
@@ -375,6 +376,7 @@ namespace Proj2Assem
                 {
                     if (x.Key.Contains("ZoneChip"))
                     {
+                        // TODO: Container contents are not projected so I'm not sure this can be reached
                         continue; // Zone Chips cannot be assembled
                     }
                     int amount = x.Value / staggeringFactor;
