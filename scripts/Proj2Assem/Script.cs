@@ -20,6 +20,7 @@ using System.Threading;
 using Microsoft.VisualBasic;
 using System.Xml.Schema;
 using VRage.Game.ModAPI.Ingame.Utilities;
+using Sandbox.Definitions;
 
 
 /*
@@ -152,7 +153,7 @@ namespace Proj2Assem
             }
             else if (_commandLine.Switch("auto"))
             {
-                Echo("Auto detecting projectors and assemblers");
+                Echo("Detecting projs and assems");
                 // Find a projector
                 GridTerminalSystem.GetBlocksOfType<IMyProjector>(autoProjectors);
                 int bestDevice = -1, bestScore = 0, currScore = 0;
@@ -295,9 +296,9 @@ namespace Proj2Assem
                 projectorName = _commandLine.Switch("p", 0);
                 // Get projectors with that name
                 List<IMyProjector> blocks = new List<IMyProjector>();
-                GridTerminalSystem.GetBlocksOfType<IMyProjector> (blocks, block => block.CustomName == projectorName);
+                GridTerminalSystem.GetBlocksOfType<IMyProjector>(blocks, block => block.CustomName == projectorName);
                 // If projector with that name doesn't exist, and switch value is a number and it's lower than the autodetected projectors count then assume it's an index from there
-                if (blocks.Count == 0 && Int32.TryParse(projectorName, out autoConfigIndex) && autoProjectors.Count > autoConfigIndex - 1) 
+                if (blocks.Count == 0 && Int32.TryParse(projectorName, out autoConfigIndex) && autoProjectors.Count > autoConfigIndex - 1)
                     projectorName = autoProjectors[autoConfigIndex - 1].CustomName;
             }
 
@@ -307,9 +308,9 @@ namespace Proj2Assem
                 assemblerName = _commandLine.Switch("a", 0);
                 // Get assemblers with that name
                 List<IMyAssembler> blocks = new List<IMyAssembler>();
-                GridTerminalSystem.GetBlocksOfType<IMyAssembler> (blocks, block => block.CustomName == assemblerName);
+                GridTerminalSystem.GetBlocksOfType<IMyAssembler>(blocks, block => block.CustomName == assemblerName);
                 // If assembler with that name doesn't exist, and switch value is a number and it's lower than the autodetected assemblers count then assume it's an index from there
-                if (blocks.Count == 0 && Int32.TryParse(assemblerName, out autoConfigIndex) && autoAssemblers.Count > autoConfigIndex - 1) 
+                if (blocks.Count == 0 && Int32.TryParse(assemblerName, out autoConfigIndex) && autoAssemblers.Count > autoConfigIndex - 1)
                     assemblerName = autoAssemblers[autoConfigIndex - 1].CustomName;
             }
 
@@ -350,8 +351,15 @@ namespace Proj2Assem
             var dryrun = _commandLine.Switch("dryrun");
 
             var totalComponents = GetTotalComponents(projector, lightArmor);
-            if (onlyRemaining)
+
+            if (totalComponents.Count > 0 && onlyRemaining)
                 totalComponents = SubtractExistingComponents(totalComponents);
+
+            if (totalComponents.Count <= 0)
+            {
+                Echo("Nothing to build");
+                return;
+            }
 
             string output = "";
             foreach (var component in totalComponents)
@@ -425,10 +433,17 @@ namespace Proj2Assem
 
         private Dictionary<string, int> GetTotalComponents(IMyProjector projector, bool lightArmor)
         {
+            Dictionary<string, int> totalComponents = new Dictionary<string, int>();
+
+            if (projector.TotalBlocks <= 0)
+            {
+                Echo("Projector has no blueprint or blueprint contains no blocks");
+                return totalComponents;
+            }
+
             var blocks = projector.RemainingBlocksPerType;
             char[] delimiters = new char[] { ',' };
             char[] remove = new char[] { '[', ']' };
-            Dictionary<string, int> totalComponents = new Dictionary<string, int>();
 
             foreach (var item in blocks)
             {
@@ -500,6 +515,8 @@ namespace Proj2Assem
                     ret[comp.Key] += remainingAmount;
                 }
             }
+
+            if (ret.Count <= 0) Echo("All components already exist");
 
             return ret;
         }
