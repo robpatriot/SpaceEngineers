@@ -19,14 +19,13 @@ using System.ComponentModel;
 using System.Threading;
 using Microsoft.VisualBasic;
 using System.Xml.Schema;
+using VRage.Game.ModAPI.Ingame.Utilities;
 
 
 /*
  * TODO:
- * 1. Good reporting/feedback
- * 2. Proper parameter handling
- * 3. Sensible defaults
  * 4. When queue goes over 50
+ * 5. Save part completed run between reloads
  */
 
 /*
@@ -56,7 +55,7 @@ namespace Proj2Assem
          * This method is optional and can be removed if not needed.
          */
         public void Save() { }
-        
+
         /*
          *   R e a d m e
          *   -----------
@@ -126,12 +125,29 @@ namespace Proj2Assem
         /***************************************/
         /************ CONFIGURATION ************/
         /***************************************/
-        private readonly bool inventoryFromSubgrids = false; // consider inventories on subgrids when computing available materials
+        const String projectorNameDefault = "Projector";
+        String projectorName = projectorNameDefault; // Name of projector to use
+        IMyProjector projector; // Projector to use
+        const String assemblerNameDefault = "Assembler";
+        String assemblerName = assemblerNameDefault; // Name of assembler to use
+        IMyAssembler assembler; // Assembler to use
+        const int staggeringFactorDefault = 1;
+        int staggeringFactor = staggeringFactorDefault; // set 1 to not stagger
+        const bool fewFirstDefault = true;
+        bool fewFirst = fewFirstDefault; // Queue smallest quantities first
+        const bool lightArmorDefault = true;
+        bool lightArmor = lightArmorDefault; // Default to assuming light armour or not
+        const bool onlyRemainingDefault = true;
+        bool onlyRemaining = onlyRemainingDefault; // Only queue components that don't already exist
+        const bool inventoryFromSubgridsDefault = false;
+        bool inventoryFromSubgrids = inventoryFromSubgridsDefault; // consider inventories on subgrids when computing available materials
         /**********************************************/
         /************ END OF CONFIGURATION ************/
         /**********************************************/
 
         Dictionary<string, Dictionary<string, int>> blueprints = new Dictionary<string, Dictionary<string, int>>();
+        MyCommandLine _commandLine = new MyCommandLine();
+        Dictionary<string, Action> _commands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
 
         public Program()
         {
@@ -159,45 +175,216 @@ namespace Proj2Assem
                     string[] compSplit = blocks[j].Split(equalsign);
                     string blockName = typeName + '/' + compSplit[0];
 
-                    // add a new dict for the block
-                    try
-                    {
-                        blueprints.Add(blockName, new Dictionary<string, int>());
-                    }
-                    catch (Exception)
-                    {
-                        Echo("Error adding block: " + blockName);
-                    }
+                    blueprints.Add(blockName, new Dictionary<string, int>());
                     var components = compSplit[1].Split(comma);
                     foreach (var component in components)
                     {
                         string[] amounts = component.Split(colon);
                         int idx = Convert.ToInt32(amounts[0]);
                         int amount = Convert.ToInt32(amounts[1]);
-                        string compName = componentNames[idx];
-                        blueprints[blockName].Add(compName, amount);
+                        blueprints[blockName].Add(componentNames[idx], amount);
                     }
                 }
             }
+            // Register functions for invocation
+            _commands["build"] = Build;
+            _commands["config"] = Config;
         }
 
-        public void AddComponents(Dictionary<string, int> addTo, Dictionary<string, int> addFrom, int times)
+        public void Config()
         {
-            if ( times == 0 ) return;
-
-            foreach (KeyValuePair<string, int> component in addFrom)
+            if (_commandLine.Switch("reset"))
             {
-                if (component.Key.Contains("EngineerPlushie") || component.Key.Contains("SabiroidPlushie")) {// Plushie components can't be assembled
-                    continue;}
-                if (addTo.ContainsKey(component.Key))
-                    addTo[component.Key] += component.Value * times;
-                else
-                    addTo[component.Key] = component.Value * times;
+                projectorName = projectorNameDefault; // Name of projector to use
+                assemblerName = assemblerNameDefault; // Name of assembler to use
+                staggeringFactor = staggeringFactorDefault; // set 1 to not stagger
+                fewFirst = fewFirstDefault; // Queue smallest quantities first
+                lightArmor = lightArmorDefault; // Default to assuming light armour or not
+                onlyRemaining = onlyRemainingDefault; // Only queue components that don't already exist
+                inventoryFromSubgrids = inventoryFromSubgridsDefault; // consider inventories on subgrids when computing available materials
+            } else if (_commandLine.Switch("auto")) {
+                Echo("Set config automatically");
+                List<IMyAssembler> assemblers = new List<IMyAssembler>();
+                GridTerminalSystem.GetBlocksOfType<IMyAssembler>(assemblers);
+                Echo("Found assemblers:");
+                for (int i = 0; i < assemblers.Count; i++) {
+                    Echo(i + ". " + assemblers[i].CustomName + " " + assemblers[i].CubeGrid == Me.CubeGrid + " " + assemblers[i].IsWorking + );
+                }
             }
 
+            if (_commandLine.Switch("show"))
+            {
+                Echo("Current config is (switch name):");
+                Echo("Projector (p): " + projectorName);
+                Echo("Assembler (a): " + assemblerName);
+                Echo("Armor Type (at): " + (lightArmor ? "Light" : "Heavy"));
+                Echo("Use Existing (ue): " + onlyRemaining);
+                Echo("Smallest First (sf): " + fewFirst);
+                Echo("Use Subgrids (ue): " + inventoryFromSubgrids);
+                Echo("Stagger factor (st): " + staggeringFactor);
+            }
         }
 
-        private List<KeyValuePair<string, int>> GetTotalComponents(IMyProjector projector)
+        public bool CheckConfig()
+        {
+            projector = GridTerminalSystem.GetBlockWithName(projectorName) as IMyProjector;
+            if (projector == null)
+            {
+                Echo("The specified projector name is not valid. No projector found.");
+                return false;
+            }
+            assembler = GridTerminalSystem.GetBlockWithName(assemblerName) as IMyAssembler;
+            if (assembler == null)
+            {
+                Echo("The specified assembler name is not valid. No assembler found.");
+                return false;
+            }
+            if (staggeringFactor <= 0)
+            {
+                Echo("Invalid staggeringFactor: must be an integer greater than 0.");
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool ProcessBooleanSwitch(ref bool option, String argName) {
+            if (_commandLine.Switch(argName))
+            {
+                String argValue = _commandLine.Switch(argName, 0);
+                if ((new[] { "true", "t", "1" }).Contains(argValue, StringComparer.OrdinalIgnoreCase))
+                    option = true;
+                else if ((new[] { "false", "f", "0" }).Contains(argValue, StringComparer.OrdinalIgnoreCase))
+                    option = false;
+                else
+                {
+                    Echo("Got passed invalid " + argName + " flag: " + argValue);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public bool ProcessGeneralSwitches()
+        {
+            if (_commandLine.Switch("p"))
+            {
+                projectorName = _commandLine.Switch("p", 0);
+            }
+
+            if (_commandLine.Switch("a"))
+            {
+                assemblerName = _commandLine.Switch("a", 0);
+            }
+
+            if (_commandLine.Switch("at"))
+            {
+                var armorType = _commandLine.Switch("at", 0);
+                if (armorType == "light" || armorType == "l")
+                    lightArmor = true;
+                else if (armorType == "heavy" || armorType == "h")
+                    lightArmor = false;
+                else
+                {
+                    Echo("Got passed invalid armor type: " + armorType);
+                    return false;
+                }
+            }
+
+            if (_commandLine.Switch("st"))
+            {
+                var stagger = _commandLine.Switch("st", 0);
+                if (!Int32.TryParse(stagger, out staggeringFactor) || staggeringFactor <= 0)
+                {
+                    Echo("Got passed invalid stagger value: " + stagger);
+                    return false;
+                }
+            }
+
+            if (!ProcessBooleanSwitch(ref onlyRemaining, "ue")) return false;
+            if (!ProcessBooleanSwitch(ref fewFirst, "sf")) return false;
+            if (!ProcessBooleanSwitch(ref inventoryFromSubgrids, "us")) return false;
+
+            return true;
+        }
+
+        public void Build()
+        {
+            if (!CheckConfig()) return;
+            var dryrun = _commandLine.Switch("dryrun");
+
+            var totalComponents = GetTotalComponents(projector, lightArmor);
+            if (onlyRemaining)
+                totalComponents = SubtractExistingComponents(totalComponents);
+
+            string output = "";
+            foreach (var component in totalComponents)
+                output += component.Key.Replace("MyObjectBuilder_BlueprintDefinition/", "") + " " + component.Value.ToString() + "\n";
+            Me.CustomData = output;
+
+            var totalComponentsList = totalComponents.ToList();
+
+            if (fewFirst)
+            {
+                totalComponentsList.Sort((pair1, pair2) => pair1.Value.CompareTo(pair2.Value));
+            }
+
+            if (dryrun)
+                Echo("On assembler " + assemblerName + " from projector " + projectorName + " would queue "
+                     + totalComponentsList.Count + " components:");
+
+            bool canProduce = true;
+            foreach (var comp in totalComponentsList) {
+                if (!assembler.CanUseBlueprint(MyDefinitionId.Parse(comp.Key)))
+                {
+                    Echo(assemblerName + " cannot produce " + comp.Key.Replace("MyObjectBuilder_BlueprintDefinition/", ""));
+                    canProduce = false;
+                }
+            }
+
+            if (!canProduce) 
+            {
+                Echo("Assembler " + assemblerName + " cannot produce required components, cancelling build");
+                return;
+            }
+
+            for (int i = 0; i < staggeringFactor; i++)
+            {
+                foreach (var x in totalComponentsList)
+                {
+                    int amount = x.Value / staggeringFactor;
+                    // if the total amount of the component is not divisible by staggeringFactor, we add the remainder to the first batch
+                    // so that if we have < staggeringFactor (or few, in general) units we get them right at the start
+                    if (i == 0)
+                        amount += x.Value % staggeringFactor;
+                    if (amount > 0)
+                    {
+                        if (dryrun)
+                            Echo(x.Key.Replace("MyObjectBuilder_BlueprintDefinition/", "") + ": " + (decimal)amount);
+                        else
+                            assembler.AddQueueItem(MyDefinitionId.Parse(x.Key), (decimal)amount);
+                    }
+                }
+            }
+            return;
+        }
+
+        public void AddComponents(Dictionary<string, int> to, Dictionary<string, int> from, int times)
+        {
+            if (times == 0) return;
+
+            foreach (KeyValuePair<string, int> component in from)
+            {
+                // Plushie components can't be assembled
+                if (component.Key.Contains("EngineerPlushie") || component.Key.Contains("SabiroidPlushie")) continue;
+                if (!to.ContainsKey(component.Key)) to[component.Key] = 0;
+
+                to[component.Key] += component.Value * times;
+            }
+        }
+
+        private Dictionary<string, int> GetTotalComponents(IMyProjector projector, bool lightArmor)
         {
             var blocks = projector.RemainingBlocksPerType;
             char[] delimiters = new char[] { ',' };
@@ -219,176 +406,104 @@ namespace Proj2Assem
 
             string armorType = "MyObjectBuilder_CubeBlock/";
             if (LargeGrid)
-                if (lightArmor)
-                    armorType += "LargeBlockArmorBlock";
-                else
-                    armorType += "LargeHeavyBlockArmorBlock";
+                armorType += "Large";
             else
-                if (lightArmor)
-                armorType += "SmallBlockArmorBlock";
-            else
-                armorType += "SmallHeavyBlockArmorBlock";
+                armorType += "Small";
+            if (!lightArmor)
+                armorType += "Heavy";
+            armorType += "BlockArmorBlock";
 
             int armors = projector.RemainingArmorBlocks;
 
             AddComponents(totalComponents, blueprints[armorType], armors);
 
-            var compList = totalComponents.ToList();
-            compList.Sort((x, y) => string.Compare(x.Key, y.Key));
-
-            return compList;
+            return totalComponents;
         }
 
-        private int GetCountFromDic<T>(Dictionary<T, int> dic, T key)
-        {
-            if (dic.ContainsKey(key))
-            {
-                return dic[key];
-            }
-            return 0;
-        }
-
-        private List<KeyValuePair<string, int>> SubtractPresentComponents(List<KeyValuePair<string, int>> compList)
+        private Dictionary<string, int> SubtractExistingComponents(Dictionary<string, int> compList)
         {
             var cubeBlocks = new List<IMyCubeBlock>();
-            GridTerminalSystem.GetBlocksOfType<IMyCubeBlock>(cubeBlocks, block => block.CubeGrid == Me.CubeGrid || inventoryFromSubgrids);
+            GridTerminalSystem.GetBlocksOfType<IMyCubeBlock>
+                (cubeBlocks, block => (block.CubeGrid == Me.CubeGrid || inventoryFromSubgrids) && block.HasInventory);
 
             Dictionary<string, int> componentAmounts = new Dictionary<string, int>();
             foreach (var b in cubeBlocks)
             {
-                if (b.HasInventory)
+                for (int i = 0; i < b.InventoryCount; i++)
                 {
-                    for (int i = 0; i < b.InventoryCount; i++)
+                    var itemList = new List<MyInventoryItem>();
+                    b.GetInventory(i).GetItems(itemList);
+                    foreach (var item in itemList)
                     {
-                        var itemList = new List<MyInventoryItem>();
-                        b.GetInventory(i).GetItems(itemList);
-                        foreach (var item in itemList)
+                        if (item.Type.TypeId.Equals("MyObjectBuilder_Component"))
                         {
-                            if (item.Type.TypeId.Equals("MyObjectBuilder_Component"))
-                            {
-                                if (!componentAmounts.ContainsKey(item.Type.SubtypeId))
-                                    componentAmounts[item.Type.SubtypeId] = 0;
-                                
-                                componentAmounts[item.Type.SubtypeId] += item.Amount.ToIntSafe();
-                            }
+                            if (!componentAmounts.ContainsKey(item.Type.SubtypeId))
+                                componentAmounts[item.Type.SubtypeId] = 0;
+
+                            componentAmounts[item.Type.SubtypeId] += item.Amount.ToIntSafe();
                         }
                     }
                 }
             }
 
-            List<KeyValuePair<string, int>> ret = new List<KeyValuePair<string, int>>();
+            Dictionary<string, int> ret = new Dictionary<string, int>();
             foreach (var comp in compList)
             {
                 string subTypeId = comp.Key.Replace("MyObjectBuilder_BlueprintDefinition/", "").Replace("Component", "");
-                if (componentAmounts.ContainsKey(subTypeId)) {
-                    var remainingAmount = comp.Value - componentAmounts[subTypeId];
-                    if (remainingAmount > 0)
-                        ret.Add(new KeyValuePair<string, int>(comp.Key, remainingAmount));
+                var remainingAmount = comp.Value;
+                if (componentAmounts.ContainsKey(subTypeId))
+                {
+                    remainingAmount -= componentAmounts[subTypeId];
                 }
+                if (remainingAmount > 0)
+                    if (!ret.ContainsKey(comp.Key)) ret[comp.Key] = 0;
+                ret[comp.Key] += remainingAmount;
             }
             return ret;
         }
 
-        private bool lightArmor;
-
         public void Main(string argument)
         {
-            string projectorName = "Projector", assemblerName = "Assembler";
-            int staggeringFactor = 1; // set 1 to not stagger
-            bool fewFirst = true;
-            lightArmor = true;
-            bool onlyRemaining = false;
-
-            if (!String.IsNullOrEmpty(argument))
+            if (_commandLine.TryParse(argument))
             {
-                try
+                Action commandAction;
+
+                // Retrieve the first argument. Switches are ignored.
+                string command = _commandLine.Argument(0);
+
+                if (_commands.TryGetValue(_commandLine.Argument(0), out commandAction))
                 {
-                    var spl = argument.Split(';');
-                    if (spl[0] != "")
-                        projectorName = spl[0];
-                    if (spl.Length > 1)
-                        if (spl[1] != "")
-                            assemblerName = spl[1];
-                    if (spl.Length > 2)
-                        if (spl[2] != "")
-                            lightArmor = bool.Parse(spl[2]);
-                    if (spl.Length > 3)
-                        if (spl[3] != "")
-                            staggeringFactor = int.Parse(spl[3]);
-                    if (spl.Length > 4)
-                        if (spl[4] != "")
-                            fewFirst = bool.Parse(spl[4]);
-                    if (spl.Length > 5)
-                        if (spl[5] != "")
-                            onlyRemaining = bool.Parse(spl[5]);
+                    // Process global switches that apply to all commands
+                    if (!ProcessGeneralSwitches())
+                        return;
+
+                    // We have found a command. Invoke it.
+                    commandAction();
                 }
-                catch (Exception)
+                else
                 {
-                    Echo("Wrong argument(s). Format: [ProjectorName];[AssemblerName];[lightArmor];[staggeringFactor];[fewFirst];[onlyRemaining]. See Readme for more info.");
-                    return;
+                    Echo($"Unknown command {command}");
                 }
             }
-
-            if (staggeringFactor <= 0)
+            else
             {
-                Echo("Invalid staggeringFactor: must be an integer greater than 0.");
-                return;
-            }
-            IMyProjector projector = GridTerminalSystem.GetBlockWithName(projectorName) as IMyProjector;
-            if (projector == null)
-            {
-                Echo("The specified projector name is not valid. No projector found.");
-                return;
-            }
-
-            var compList = GetTotalComponents(projector);
-            Echo("Before subtract present complist has " + compList.Count + " items");
-            foreach (var comprob in compList)
-                Echo("complist item is " + comprob.Value.ToString());
-
-            if (onlyRemaining)
-            {
-                compList = SubtractPresentComponents(compList);
-            }
-            Echo("After subtract present complist has " + compList.Count + " items");
-
-            string output = "";
-            foreach (var component in compList)
-                output += component.Key.Replace("MyObjectBuilder_BlueprintDefinition/", "") + " " + component.Value.ToString() + "\n";
-            Me.CustomData = output;
-
-            IMyAssembler assembler = GridTerminalSystem.GetBlockWithName(assemblerName) as IMyAssembler;
-            if (assembler == null)
-            {
-                Echo("The specified assembler name is not valid. No assembler found.");
-                return;
-            }
-
-            //var compList = totalComponents.ToList();
-
-            if (fewFirst)
-            {
-                compList.Sort((pair1, pair2) => pair1.Value.CompareTo(pair2.Value));
-            }
-            for (int i = 0; i < staggeringFactor; i++)
-            {
-                foreach (var x in compList)
-                {
-                    if (x.Key.Contains("ZoneChip"))
-                    {
-                        // TODO: Container contents are not projected so I'm not sure this can be reached
-                        continue; // Zone Chips cannot be assembled
-                    }
-                    int amount = x.Value / staggeringFactor;
-                    // if the total amount of the component is not divisible by staggeringFactor, we add the remainder to the first batch
-                    // so that if we have < staggeringFactor (or few, in general) units we get them right at the start
-                    if (i == 0)
-                    {
-                        amount += x.Value % staggeringFactor;
-                    }
-                    if (amount > 0)
-                        assembler.AddQueueItem(MyDefinitionId.Parse(x.Key), (decimal)amount);
-                }
+                Echo("Proj to Assembler - Queue components for blueprints");
+                Echo("Commands build or config");
+                Echo("Build to queue components. Switch: dryrun to practice");
+                Echo("Config to manage. Switch: show to print, reset to default config");
+                Echo("Not: reset superscedes setting config and auto option");
+                Echo("All commands set config options with switches:");
+                Echo("p: Projector - sets name of projector");
+                Echo("a: Assembler - sets name of assembler");
+                Echo("at: ArmorType - sets type of armor (either light or heavy)");
+                Echo("st: StaggerFactor - sets stagger factor (divide each component into multiple batches)");
+                Echo("ue: Use Existing - only queue components that don't exist");
+                Echo("sf: Smallest First - order components such that smallest number of components are queued first");
+                Echo("us: Use Subgrids - consider subgrids when looking for existing components");
+                Echo("Example 1: config -p \"My projector\" -show");
+                Echo("Sets projector to My projector and then shows full config");
+                Echo("Example 2: build -dryrun -at heavy -ue f");
+                Echo("Sets Armor Type to heavy, turns off using existing components and then shows what would happend if it ran without doing so");
             }
         }
 
