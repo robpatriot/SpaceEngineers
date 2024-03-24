@@ -92,6 +92,8 @@ namespace Proj2Assem
         bool lightArmor = lightArmorDefault; // Default to assuming light armour or not
         bool onlyRemaining = onlyRemainingDefault; // Only queue components that don't already exist
         bool inventoryFromSubgrids = inventoryFromSubgridsDefault; // consider inventories on subgrids when computing available materials
+        List<IMyProjector> autoProjectors = new List<IMyProjector>();
+        List<IMyAssembler> autoAssemblers = new List<IMyAssembler>();
 
         public Program()
         {
@@ -151,22 +153,21 @@ namespace Proj2Assem
             else if (_commandLine.Switch("auto"))
             {
                 // Find a projector
-                List<IMyProjector> projectors = new List<IMyProjector>();
-                GridTerminalSystem.GetBlocksOfType<IMyProjector>(projectors);
+                GridTerminalSystem.GetBlocksOfType<IMyProjector>(autoProjectors);
                 int bestDevice = -1, bestScore = 0, currScore = 0;
-                if (projectors.Count > 0)
+                if (autoProjectors.Count > 0)
                 {
                     Echo("Found projectors:");
                     Echo("No. Name OnGrid Works GType");
-                    for (int i = 0; i < projectors.Count; i++)
+                    for (int i = 0; i < autoProjectors.Count; i++)
                     {
-                        Echo((i + 1).ToString() + ". \"" + projectors[i].CustomName + "\" " + (projectors[i].CubeGrid == Me.CubeGrid).ToString() + " "
-                            + projectors[i].IsWorking.ToString() + " " + projectors[i].CubeGrid.GridSizeEnum);
-                        if (projectors[i].IsWorking)
+                        Echo((i + 1).ToString() + ". \"" + autoProjectors[i].CustomName + "\" " + (autoProjectors[i].CubeGrid == Me.CubeGrid).ToString() + " "
+                            + autoProjectors[i].IsWorking.ToString() + " " + autoProjectors[i].CubeGrid.GridSizeEnum);
+                        if (autoProjectors[i].IsWorking)
                         {
                             currScore = 1;
-                            if (projectors[i].CubeGrid.GridSizeEnum == MyCubeSize.Small) currScore += 2;
-                            if (projectors[i].CubeGrid == Me.CubeGrid) currScore += 3;
+                            if (autoProjectors[i].CubeGrid.GridSizeEnum == MyCubeSize.Small) currScore += 3;
+                            if (autoProjectors[i].CubeGrid == Me.CubeGrid) currScore += 2;
 
                             if (currScore > bestScore)
                             {
@@ -179,7 +180,7 @@ namespace Proj2Assem
                     }
                     if (bestScore > 0)
                     {
-                        projectorName = projectors[bestDevice].CustomName;
+                        projectorName = autoProjectors[bestDevice].CustomName;
                         Echo("Using: \"" + projectorName + "\"");
                     }
                     else
@@ -189,35 +190,36 @@ namespace Proj2Assem
                 }
 
                 // Find an assembler
-                List<IMyAssembler> assemblers = new List<IMyAssembler>();
-                GridTerminalSystem.GetBlocksOfType<IMyAssembler>(assemblers);
+                GridTerminalSystem.GetBlocksOfType<IMyAssembler>(autoAssemblers);
                 bestDevice = -1; bestScore = 0; currScore = 0;
-                if (assemblers.Count > 0)
+                if (autoAssemblers.Count > 0)
                 {
                     Echo("Found assemblers:");
                     Echo("No. Name OnGrid Works Coop");
-                    for (int i = 0; i < assemblers.Count; i++)
+                    for (int i = 0; i < autoAssemblers.Count; i++)
                     {
-                        Echo((i + 1).ToString() + ". \"" + assemblers[i].CustomName + "\" " + (assemblers[i].CubeGrid == Me.CubeGrid).ToString() + " "
-                            + assemblers[i].IsWorking.ToString() + " " + assemblers[i].CooperativeMode);
-                        if (assemblers[i].IsWorking)
+                        Echo((i + 1).ToString() + ". \"" + autoAssemblers[i].CustomName + "\" " + (autoAssemblers[i].CubeGrid == Me.CubeGrid).ToString() + " "
+                            + autoAssemblers[i].IsWorking.ToString() + " " + autoAssemblers[i].CooperativeMode);
+                        if (autoAssemblers[i].IsWorking)
                         {
                             currScore = 1;
-                            if (!assemblers[i].CooperativeMode) currScore += 3;
-                            if (assemblers[i].CubeGrid == Me.CubeGrid) currScore += 2;
+                            if (!autoAssemblers[i].CooperativeMode) currScore += 3;
+                            if (autoAssemblers[i].CubeGrid == Me.CubeGrid) currScore += 2;
+                            if (autoAssemblers[i].DefinitionDisplayNameText == "Survival Kit") currScore--;
+                            if (autoAssemblers[i].DefinitionDisplayNameText == "Assembler" ||
+                                autoAssemblers[i].DefinitionDisplayNameText == "Industrial Assembler") currScore += 2;
 
                             if (currScore > bestScore)
                             {
                                 bestScore = currScore;
                                 bestDevice = i;
                             }
-                            if (currScore == 6) break;
                         }
 
                     }
                     if (bestScore > 0)
                     {
-                        assemblerName = assemblers[bestDevice].CustomName;
+                        assemblerName = autoAssemblers[bestDevice].CustomName;
                         Echo("Using: \"" + assemblerName + "\"");
                     }
                     else
@@ -284,14 +286,24 @@ namespace Proj2Assem
 
         public bool ProcessGeneralSwitches()
         {
+            int autoConfigIndex;
+
             if (_commandLine.Switch("p"))
             {
                 projectorName = _commandLine.Switch("p", 0);
+                List<IMyProjector> blocks = new List<IMyProjector>();
+                GridTerminalSystem.GetBlocksOfType<IMyProjector> (blocks, block => block.CustomName == projectorName);
+                if (blocks.Count == 0 && Int32.TryParse(projectorName, out autoConfigIndex) && autoProjectors.Count > autoConfigIndex - 1) 
+                    projectorName = autoProjectors[autoConfigIndex - 1].CustomName;
             }
 
             if (_commandLine.Switch("a"))
             {
                 assemblerName = _commandLine.Switch("a", 0);
+                List<IMyAssembler> blocks = new List<IMyAssembler>();
+                GridTerminalSystem.GetBlocksOfType<IMyAssembler> (blocks, block => block.CustomName == assemblerName);
+                if (blocks.Count == 0 && Int32.TryParse(assemblerName, out autoConfigIndex) && autoAssemblers.Count > autoConfigIndex - 1) 
+                    assemblerName = autoAssemblers[autoConfigIndex - 1].CustomName;
             }
 
             if (_commandLine.Switch("at"))
@@ -513,11 +525,11 @@ namespace Proj2Assem
                 Echo("Proj to Assembler - Queue components for blueprints");
                 Echo("Commands build or config");
                 Echo("Build to queue components. Switch: dryrun to practice");
-                Echo("Config to manage. Switch: show to print, reset to default config");
+                Echo("Config to manage. Switch: show to print, reset to default config, auto to autoset");
                 Echo("Not: reset superscedes setting config and auto option");
                 Echo("All commands set config options with switches:");
-                Echo("p: Projector - sets name of projector");
-                Echo("a: Assembler - sets name of assembler");
+                Echo("p: Projector - sets name of projector (can use no. after config auto)");
+                Echo("a: Assembler - sets name of assembler (can use no. after config auto)");
                 Echo("at: ArmorType - sets type of armor (either light or heavy)");
                 Echo("st: StaggerFactor - sets stagger factor (divide each component into multiple batches)");
                 Echo("ue: Use Existing - only queue components that don't exist");
