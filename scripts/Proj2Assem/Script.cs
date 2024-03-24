@@ -60,65 +60,9 @@ namespace Proj2Assem
          *   R e a d m e
          *   -----------
          * 
-         *   Projector2Assembler by Juggernaut93
+         *   Proj2Assem by Bobbers
          *   
          *   Queue all the components needed to build a blueprint on your assembler.
-         *   
-         *   With some code by nihilus from here:
-         *   https://forum.keenswh.com/threads/adding-needed-projector-bp-components-to-assembler.7396730/#post-1287067721
-         *   
-         *   CHECK ALSO: Projector2LCD (also by Juggernaut93) to show info about missing components, ingots and ores.
-         *   Link: https://steamcommunity.com/sharedfiles/filedetails/?id=1500259551
-         *   
-         *   MODS COMPATIBILITY:
-         *      - By default the script is not compatible with mods adding new blocks or modifying their needed components.
-         *      - The script can be made compatible with mods that modify or add new block definitions (but without adding new
-         *          kinds of components to be assembled in an Assembler) running the following app:
-         *          https://github.com/Juggernaut93/Projector2Assembler/releases
-         *      - Run the .exe file and follow the instructions on screen. A file will be created with the line of text
-         *          that needs to be added to the script.
-         *      - The app should be runnable on Windows 10 without additional dependencies.
-         *      - On older versions of Windows this package might be needed:
-         *          https://www.microsoft.com/en-US/download/details.aspx?id=48145
-         *      - If you have problems running the .exe app, you can run the .py executable using Python on the command line.
-         *   
-         *   SETUP:
-         *      - You obviously need a programming block, a projector, an assembler
-         *      - Run the script with this argument: [ProjectorName];[AssemblerName];[lightArmor];[staggeringFactor];[fewFirst];[onlyRemaining]
-         *          - [] indicates it's an optional parameter, do NOT include "[]" in the actual arguments!
-         *          - ProjectorName (default: Projector) is the name of the projector with the blueprint you want to build
-         *          - AssemblerName (default: Assembler) is the name of the assembler that will produce the needed components
-         *          - lightArmor is true (default) or false and tells the script to assume all the armor blocks listed by
-         *              the projector are respectively Light Armor Blocks or Heavy Armor Blocks
-         *          - staggeringFactor is a positive integer (10 by default) that tells the script how to stagger the
-         *              production
-         *          - fewFirst is true (default) or false and tells the script to queue the components in the assembler
-         *              sorted by amount. If false, the order is undefined (currently it's alphabetical, but it's not
-         *              guaranteed to stay the same in the future)
-         *          - onlyRemaining is true or false (default) and tells the script whether to check for the components
-         *              already in stock in the entire grid and to only queue the missing components in the assembler.
-         *              By default the script doesn't check for subgrids. You can turn the feature on by setting the variable
-         *              inventoryFromSubgrids to true. WARNING: queuing more than one blueprint at a time with this option
-         *              on would result in the available components being subtracted by each blueprint, use CAREFULLY
-         *  
-         *   HOW IT WORKS:
-         *      - The script gets from the projector the remaining blocks to build. Unfortunately, the projector is not
-         *          precise about the type of armor blocks to build and only gives a generic "armor blocks". You can then
-         *          specify if you want to assume all the blocks are light or heavy armor blocks, but keep in mind that
-         *          the script will overproduce if you specify heavy blocks but not all your blocks are full cubes and/or
-         *          you also have light blocks; it will (probably) underproduce if you specify light blocks but you have
-         *          many heavy armor blocks.
-         *      - The script then sorts the components needed to build such blocks (if you set fewFirst to true) by
-         *          ascending amount and will divide the amount of components by staggeringFactor. It will then tell the
-         *          assembler to produce the obtained amount of components staggeringFactor times.
-         *      - EXAMPLE:
-         *          - your blueprint requires 3000 steel plates, 1500 construction components and 300 metal grids
-         *          - you run the script with fewFirst = true and staggeringFactor = 10
-         *          - the script will tell the assembler to build 30 metal grids, 150 construction components and
-         *            300 steel plates 10 times
-         *          - This will ensure your welding process won't be blocked by the lack of a single component
-         *            that might have ended up at the end of the queue, and you will get a nice proportion of each
-         *            component without waiting too much
          *            
          */
 
@@ -126,21 +70,12 @@ namespace Proj2Assem
         /************ CONFIGURATION ************/
         /***************************************/
         const String projectorNameDefault = "Projector";
-        String projectorName = projectorNameDefault; // Name of projector to use
-        IMyProjector projector; // Projector to use
         const String assemblerNameDefault = "Assembler";
-        String assemblerName = assemblerNameDefault; // Name of assembler to use
-        IMyAssembler assembler; // Assembler to use
         const int staggeringFactorDefault = 1;
-        int staggeringFactor = staggeringFactorDefault; // set 1 to not stagger
         const bool fewFirstDefault = true;
-        bool fewFirst = fewFirstDefault; // Queue smallest quantities first
         const bool lightArmorDefault = true;
-        bool lightArmor = lightArmorDefault; // Default to assuming light armour or not
         const bool onlyRemainingDefault = true;
-        bool onlyRemaining = onlyRemainingDefault; // Only queue components that don't already exist
-        const bool inventoryFromSubgridsDefault = false;
-        bool inventoryFromSubgrids = inventoryFromSubgridsDefault; // consider inventories on subgrids when computing available materials
+        const bool inventoryFromSubgridsDefault = true;
         /**********************************************/
         /************ END OF CONFIGURATION ************/
         /**********************************************/
@@ -148,6 +83,15 @@ namespace Proj2Assem
         Dictionary<string, Dictionary<string, int>> blueprints = new Dictionary<string, Dictionary<string, int>>();
         MyCommandLine _commandLine = new MyCommandLine();
         Dictionary<string, Action> _commands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
+        String assemblerName = assemblerNameDefault; // Name of assembler to use
+        IMyProjector projector; // Projector to use
+        String projectorName = projectorNameDefault; // Name of projector to use
+        IMyAssembler assembler; // Assembler to use
+        int staggeringFactor = staggeringFactorDefault; // set 1 to not stagger
+        bool fewFirst = fewFirstDefault; // Queue smallest quantities first
+        bool lightArmor = lightArmorDefault; // Default to assuming light armour or not
+        bool onlyRemaining = onlyRemainingDefault; // Only queue components that don't already exist
+        bool inventoryFromSubgrids = inventoryFromSubgridsDefault; // consider inventories on subgrids when computing available materials
 
         public Program()
         {
@@ -195,6 +139,7 @@ namespace Proj2Assem
         {
             if (_commandLine.Switch("reset"))
             {
+                Echo("Resetting config back to defaults");
                 projectorName = projectorNameDefault; // Name of projector to use
                 assemblerName = assemblerNameDefault; // Name of assembler to use
                 staggeringFactor = staggeringFactorDefault; // set 1 to not stagger
@@ -202,13 +147,83 @@ namespace Proj2Assem
                 lightArmor = lightArmorDefault; // Default to assuming light armour or not
                 onlyRemaining = onlyRemainingDefault; // Only queue components that don't already exist
                 inventoryFromSubgrids = inventoryFromSubgridsDefault; // consider inventories on subgrids when computing available materials
-            } else if (_commandLine.Switch("auto")) {
-                Echo("Set config automatically");
+            }
+            else if (_commandLine.Switch("auto"))
+            {
+                // Find a projector
+                List<IMyProjector> projectors = new List<IMyProjector>();
+                GridTerminalSystem.GetBlocksOfType<IMyProjector>(projectors);
+                int bestDevice = -1, bestScore = 0, currScore = 0;
+                if (projectors.Count > 0)
+                {
+                    Echo("Found projectors:");
+                    Echo("No. Name OnGrid Works GType");
+                    for (int i = 0; i < projectors.Count; i++)
+                    {
+                        Echo((i + 1).ToString() + ". \"" + projectors[i].CustomName + "\" " + (projectors[i].CubeGrid == Me.CubeGrid).ToString() + " "
+                            + projectors[i].IsWorking.ToString() + " " + projectors[i].CubeGrid.GridSizeEnum);
+                        if (projectors[i].IsWorking)
+                        {
+                            currScore = 1;
+                            if (projectors[i].CubeGrid.GridSizeEnum == MyCubeSize.Small) currScore += 2;
+                            if (projectors[i].CubeGrid == Me.CubeGrid) currScore += 3;
+
+                            if (currScore > bestScore)
+                            {
+                                bestScore = currScore;
+                                bestDevice = i;
+                            }
+                            if (currScore == 6) break;
+                        }
+
+                    }
+                    if (bestScore > 0)
+                    {
+                        projectorName = projectors[bestDevice].CustomName;
+                        Echo("Using: \"" + projectorName + "\"");
+                    }
+                    else
+                    {
+                        Echo("No working projectors found, projector config unchanged");
+                    }
+                }
+
+                // Find an assembler
                 List<IMyAssembler> assemblers = new List<IMyAssembler>();
                 GridTerminalSystem.GetBlocksOfType<IMyAssembler>(assemblers);
-                Echo("Found assemblers:");
-                for (int i = 0; i < assemblers.Count; i++) {
-                    Echo(i + ". " + assemblers[i].CustomName + " " + assemblers[i].CubeGrid == Me.CubeGrid + " " + assemblers[i].IsWorking + );
+                bestDevice = -1; bestScore = 0; currScore = 0;
+                if (assemblers.Count > 0)
+                {
+                    Echo("Found assemblers:");
+                    Echo("No. Name OnGrid Works Coop");
+                    for (int i = 0; i < assemblers.Count; i++)
+                    {
+                        Echo((i + 1).ToString() + ". \"" + assemblers[i].CustomName + "\" " + (assemblers[i].CubeGrid == Me.CubeGrid).ToString() + " "
+                            + assemblers[i].IsWorking.ToString() + " " + assemblers[i].CooperativeMode);
+                        if (assemblers[i].IsWorking)
+                        {
+                            currScore = 1;
+                            if (!assemblers[i].CooperativeMode) currScore += 3;
+                            if (assemblers[i].CubeGrid == Me.CubeGrid) currScore += 2;
+
+                            if (currScore > bestScore)
+                            {
+                                bestScore = currScore;
+                                bestDevice = i;
+                            }
+                            if (currScore == 6) break;
+                        }
+
+                    }
+                    if (bestScore > 0)
+                    {
+                        assemblerName = assemblers[bestDevice].CustomName;
+                        Echo("Using: \"" + assemblerName + "\"");
+                    }
+                    else
+                    {
+                        Echo("No working Assemblers found, assembler config unchanged");
+                    }
                 }
             }
 
@@ -230,13 +245,13 @@ namespace Proj2Assem
             projector = GridTerminalSystem.GetBlockWithName(projectorName) as IMyProjector;
             if (projector == null)
             {
-                Echo("The specified projector name is not valid. No projector found.");
+                Echo("Projector \"" + projectorName + "\" is not valid. No projector found.");
                 return false;
             }
             assembler = GridTerminalSystem.GetBlockWithName(assemblerName) as IMyAssembler;
             if (assembler == null)
             {
-                Echo("The specified assembler name is not valid. No assembler found.");
+                Echo("Assembler \"" + assemblerName + "\" is not valid. No assembler found.");
                 return false;
             }
             if (staggeringFactor <= 0)
@@ -248,7 +263,8 @@ namespace Proj2Assem
             return true;
         }
 
-        public bool ProcessBooleanSwitch(ref bool option, String argName) {
+        public bool ProcessBooleanSwitch(ref bool option, String argName)
+        {
             if (_commandLine.Switch(argName))
             {
                 String argValue = _commandLine.Switch(argName, 0);
@@ -330,24 +346,28 @@ namespace Proj2Assem
                 totalComponentsList.Sort((pair1, pair2) => pair1.Value.CompareTo(pair2.Value));
             }
 
-            if (dryrun)
-                Echo("On assembler " + assemblerName + " from projector " + projectorName + " would queue "
-                     + totalComponentsList.Count + " components:");
-
             bool canProduce = true;
-            foreach (var comp in totalComponentsList) {
+            foreach (var comp in totalComponentsList)
+            {
                 if (!assembler.CanUseBlueprint(MyDefinitionId.Parse(comp.Key)))
                 {
-                    Echo(assemblerName + " cannot produce " + comp.Key.Replace("MyObjectBuilder_BlueprintDefinition/", ""));
+                    Echo("\"" + assemblerName + "\" cannot produce " + comp.Key.Replace("MyObjectBuilder_BlueprintDefinition/", ""));
                     canProduce = false;
                 }
             }
 
-            if (!canProduce) 
+            if (!canProduce)
             {
-                Echo("Assembler " + assemblerName + " cannot produce required components, cancelling build");
+                Echo("Assembler \"" + assemblerName + "\" cannot produce required components, cancelling build");
                 return;
             }
+
+            String queueString = "\" queuing ";
+            if (dryrun)
+                queueString = "\" would queue ";
+
+            Echo("On assembler \"" + assemblerName + "\" from projector \"" + projectorName + queueString
+                    + totalComponentsList.Count + " components");
 
             for (int i = 0; i < staggeringFactor; i++)
             {
@@ -456,9 +476,12 @@ namespace Proj2Assem
                     remainingAmount -= componentAmounts[subTypeId];
                 }
                 if (remainingAmount > 0)
+                {
                     if (!ret.ContainsKey(comp.Key)) ret[comp.Key] = 0;
-                ret[comp.Key] += remainingAmount;
+                    ret[comp.Key] += remainingAmount;
+                }
             }
+
             return ret;
         }
 
