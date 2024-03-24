@@ -152,6 +152,7 @@ namespace Proj2Assem
             }
             else if (_commandLine.Switch("auto"))
             {
+                Echo("Auto detecting projectors and assemblers");
                 // Find a projector
                 GridTerminalSystem.GetBlocksOfType<IMyProjector>(autoProjectors);
                 int bestDevice = -1, bestScore = 0, currScore = 0;
@@ -290,18 +291,24 @@ namespace Proj2Assem
 
             if (_commandLine.Switch("p"))
             {
+                // Store projector name switch value
                 projectorName = _commandLine.Switch("p", 0);
+                // Get projectors with that name
                 List<IMyProjector> blocks = new List<IMyProjector>();
                 GridTerminalSystem.GetBlocksOfType<IMyProjector> (blocks, block => block.CustomName == projectorName);
+                // If projector with that name doesn't exist, and switch value is a number and it's lower than the autodetected projectors count then assume it's an index from there
                 if (blocks.Count == 0 && Int32.TryParse(projectorName, out autoConfigIndex) && autoProjectors.Count > autoConfigIndex - 1) 
                     projectorName = autoProjectors[autoConfigIndex - 1].CustomName;
             }
 
             if (_commandLine.Switch("a"))
             {
+                // Store assembler name switch value
                 assemblerName = _commandLine.Switch("a", 0);
+                // Get assemblers with that name
                 List<IMyAssembler> blocks = new List<IMyAssembler>();
                 GridTerminalSystem.GetBlocksOfType<IMyAssembler> (blocks, block => block.CustomName == assemblerName);
+                // If assembler with that name doesn't exist, and switch value is a number and it's lower than the autodetected assemblers count then assume it's an index from there
                 if (blocks.Count == 0 && Int32.TryParse(assemblerName, out autoConfigIndex) && autoAssemblers.Count > autoConfigIndex - 1) 
                     assemblerName = autoAssemblers[autoConfigIndex - 1].CustomName;
             }
@@ -523,17 +530,17 @@ namespace Proj2Assem
             else
             {
                 Echo("Proj to Assembler - Queue components for blueprints");
-                Echo("Commands build or config");
+                Echo("Commands: build or config");
                 Echo("Build to queue components. Switch: dryrun to practice");
                 Echo("Config to manage. Switch: show to print, reset to default config, auto to autoset");
-                Echo("Not: reset superscedes setting config and auto option");
+                Echo("Note: reset superscedes config switches and auto option");
                 Echo("All commands set config options with switches:");
-                Echo("p: Projector - sets name of projector (can use no. after config auto)");
-                Echo("a: Assembler - sets name of assembler (can use no. after config auto)");
+                Echo("p: Projector - sets name of projector (can use no. after config -auto)");
+                Echo("a: Assembler - sets name of assembler (can use no. after config -auto)");
                 Echo("at: ArmorType - sets type of armor (either light or heavy)");
                 Echo("st: StaggerFactor - sets stagger factor (divide each component into multiple batches)");
                 Echo("ue: Use Existing - only queue components that don't exist");
-                Echo("sf: Smallest First - order components such that smallest number of components are queued first");
+                Echo("sf: Smallest First - order queue so smallest number of components are first");
                 Echo("us: Use Subgrids - consider subgrids when looking for existing components");
                 Echo("Example 1: config -p \"My projector\" -show");
                 Echo("Sets projector to My projector and then shows full config");
