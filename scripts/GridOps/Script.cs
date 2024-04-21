@@ -16,6 +16,8 @@ using SpaceEngineers.Game.ModAPI.Ingame;
 using VRage.Game.ModAPI.Ingame.Utilities;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using Microsoft.VisualBasic;
 
 /*
  * Must be unique per each script project.
@@ -48,9 +50,6 @@ namespace GridOps
         // Internal variables
         MyCommandLine _commandLine = new MyCommandLine();
         Dictionary<string, Action> _commands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
-        List<IMyBatteryBlock> batteries = new List<IMyBatteryBlock>();
-        Dictionary<string, List<IMyPowerProducer>> producerMap = null;
-        TimeSpan time = new TimeSpan();
 
         /*
          * The constructor, called only once every session and always before any 
@@ -63,8 +62,10 @@ namespace GridOps
          */
         public Program()
         {
+            props = ReadProperties();
+            ProcessProperties();
+            _commands["config"] = Config;
             Runtime.UpdateFrequency = UpdateFrequency.Update100;
-            props = ReadProperties(Me.CustomData);
         }
 
         /*
@@ -85,33 +86,6 @@ namespace GridOps
          */
         public void Main(string argument, UpdateType updateType)
         {
-            // Configure available text surface if possible
-            if (textSurface == null)
-            {
-                if (props.ContainsKey(PROPERTY_NAME_TEXTSURFACE))
-                {
-                    textSurfaceName = props[PROPERTY_NAME_TEXTSURFACE];
-                    textSurface = ParseSurfaceProperty(textSurfaceName);
-                }
-                if (textSurface == null)
-                {
-                    textSurface = Me.GetSurface(0);
-                }
-                textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
-            }
-            if (props.ContainsKey(PROPERTY_NAME_TEXTSURFACE) && textSurface != Me.GetSurface(0))
-            {
-                Echo($"Using text-surface at: '{textSurfaceName}'");
-            }
-            else if (props.ContainsKey(PROPERTY_NAME_TEXTSURFACE))
-            {
-                Echo($"WARNING: No '{PROPERTY_NAME_TEXTSURFACE}' found with name '{props[PROPERTY_NAME_TEXTSURFACE]}'. Using text-surface from this programmable block.");
-            }
-            else
-            {
-                Echo($"WARNING: No '{PROPERTY_NAME_TEXTSURFACE}' defined in custom data. Using text-surface from this programmable block.");
-            }
-
             // We got an interactive command
             if ((updateType & (UpdateType.Trigger | UpdateType.Terminal)) != 0)
             {
@@ -146,103 +120,107 @@ namespace GridOps
             // We got a timetick iteration
             if ((updateType & UpdateType.Update100) != 0)
             {
-                textSurface.WriteText("");
-                Print(textSurface, "POWER-INFO:");
+                textSurface.WriteText("POWER-INFO:\n", false);
 
                 List<IMyPowerProducer> powerProducers = new List<IMyPowerProducer>();
                 GridTerminalSystem.GetBlocksOfType(powerProducers);
+                Dictionary<string, List<IMyPowerProducer>> producerMap = new Dictionary<string, List<IMyPowerProducer>>();
+                List<IMyBatteryBlock> batteries = new List<IMyBatteryBlock>();
+                GetProducers(powerProducers, producerMap, batteries);
 
-                if (producerMap == null)
+                calculateBattState(batteries);
+                calculateProducerState(producerMap);
+            }
+        }
+        private void calculateProducerState(Dictionary<string, List<IMyPowerProducer>> producerMap)
+        {
+            if (producerMap.Count > 0)
+            {
+                foreach (KeyValuePair<string, List<IMyPowerProducer>> kvp in producerMap)
                 {
-                    producerMap = new Dictionary<string, List<IMyPowerProducer>>();
+                    int count = kvp.Value.Count;
+                    string name = kvp.Key;
+                    float producerOutput = 0f;
+                    float producerMaxOutput = 0f;
+                    foreach (IMyPowerProducer powerProducer in kvp.Value)
+                    {
+                        producerOutput += powerProducer.CurrentOutput;
+                        producerMaxOutput += powerProducer.MaxOutput;
+                    }
+                    producerOutput = (float)Math.Round(producerOutput, 2);
+                    producerMaxOutput = (float)Math.Round(producerMaxOutput, 2);
+                    textSurface.WriteText($"{kvp.Value.Count} {name}, {producerOutput} of {producerMaxOutput} MW\n", true);
                 }
-                else
-                {
-                    producerMap.Clear();
-                }
-                batteries.Clear();
+            }
+            else
+            {
+                textSurface.WriteText("No power-producers found.\n", true);
+            }
 
-                foreach (IMyPowerProducer producer in powerProducers)
-                {
-                    if (producer.CubeGrid != Me.CubeGrid)
-                    {
-                        continue;
-                    }
-                    if (producer is IMyBatteryBlock)
-                    {
-                        batteries.Add(producer as IMyBatteryBlock);
-                        continue;
-                    }
-                    string key = GetType(producer);
-                    List<IMyPowerProducer> producerType = null;
-                    if (producerMap.ContainsKey(key))
-                    {
-                        producerType = producerMap[key];
-                    }
-                    else
-                    {
-                        producerType = new List<IMyPowerProducer>();
-                        producerMap.Add(key, producerType);
-                    }
-                    producerType.Add(producer);
-                }
+        }
 
-                if (batteries.Count > 0)
+        private void calculateBattState(List<IMyBatteryBlock> batteries)
+        {
+            if (batteries.Count > 0)
+            {
+                float currentStoredPower = 0f;
+                float maxStoredPower = 0f;
+                float batteriesInput = 0f;
+                float batteriesMaxInput = 0f;
+                float batteriesOutput = 0f;
+                float batteriesMaxOutput = 0f;
+                foreach (IMyBatteryBlock battery in batteries)
                 {
-                    float currentStoredPower = 0f;
-                    float maxStoredPower = 0f;
-                    float batteriesInput = 0f;
-                    float batteriesMaxInput = 0f;
-                    float batteriesOutput = 0f;
-                    float batteriesMaxOutput = 0f;
-                    foreach (IMyBatteryBlock battery in batteries)
-                    {
-                        currentStoredPower += battery.CurrentStoredPower;
-                        maxStoredPower += battery.MaxStoredPower;
-                        batteriesInput += battery.CurrentInput;
-                        batteriesMaxInput += battery.MaxInput;
-                        batteriesOutput += battery.CurrentOutput;
-                        batteriesMaxOutput += battery.MaxOutput;
-                    }
-                    float powerLevelPercentage = currentStoredPower / maxStoredPower * 100;
+                    currentStoredPower += battery.CurrentStoredPower;
+                    maxStoredPower += battery.MaxStoredPower;
+                    batteriesInput += battery.CurrentInput;
+                    batteriesMaxInput += battery.MaxInput;
+                    batteriesOutput += battery.CurrentOutput;
+                    batteriesMaxOutput += battery.MaxOutput;
+                }
+                float powerLevelPercentage = currentStoredPower / maxStoredPower * 100;
 
-                    batteriesInput = (float)Math.Round(batteriesInput, 2);
-                    batteriesMaxInput = (float)Math.Round(batteriesMaxInput, 2);
-                    batteriesOutput = (float)Math.Round(batteriesOutput, 2);
-                    batteriesMaxOutput = (float)Math.Round(batteriesMaxOutput, 2);
-                    Print(textSurface, $"{batteries.Count} Batts {(int)powerLevelPercentage} % in: {batteriesInput}MW of {batteriesMaxInput}MW out: {batteriesOutput}MW of {batteriesMaxOutput}MW");
-                }
-                else
-                {
-                    Print(textSurface, "No batteries found.");
-                }
-
-                if (producerMap.Count > 0)
-                {
-                    foreach (KeyValuePair<string, List<IMyPowerProducer>> kvp in producerMap)
-                    {
-                        int count = kvp.Value.Count;
-                        string name = kvp.Key;
-                        float producerOutput = 0f;
-                        float producerMaxOutput = 0f;
-                        foreach (IMyPowerProducer powerProducer in kvp.Value)
-                        {
-                            producerOutput += powerProducer.CurrentOutput;
-                            producerMaxOutput += powerProducer.MaxOutput;
-                        }
-                        producerOutput = (float)Math.Round(producerOutput, 2);
-                        producerMaxOutput = (float)Math.Round(producerMaxOutput, 2);
-                        Print(textSurface, $"{kvp.Value.Count} {name}, {producerOutput} of {producerMaxOutput} MW");
-                    }
-                }
-                else
-                {
-                    Print(textSurface, "No power-producers found.");
-                }
+                batteriesInput = (float)Math.Round(batteriesInput, 2);
+                batteriesMaxInput = (float)Math.Round(batteriesMaxInput, 2);
+                batteriesOutput = (float)Math.Round(batteriesOutput, 2);
+                batteriesMaxOutput = (float)Math.Round(batteriesMaxOutput, 2);
+                textSurface.WriteText($"{batteries.Count} Batts {(int)powerLevelPercentage} % in: {batteriesInput}MW of {batteriesMaxInput}MW out: {batteriesOutput}MW of {batteriesMaxOutput}MW\n", true);
+            }
+            else
+            {
+                textSurface.WriteText("No batteries found.\n", true);
             }
         }
 
-        public bool ProcessGeneralSwitches()
+        private void GetProducers(List<IMyPowerProducer> powerProducers, Dictionary<string, List<IMyPowerProducer>> producerMap, List<IMyBatteryBlock> batteries)
+        {
+            foreach (IMyPowerProducer producer in powerProducers)
+            {
+                if (producer.CubeGrid != Me.CubeGrid)
+                {
+                    continue;
+                }
+                if (producer is IMyBatteryBlock)
+                {
+                    batteries.Add(producer as IMyBatteryBlock);
+                    continue;
+                }
+                string key = GetType(producer);
+                List<IMyPowerProducer> producerType = null;
+                if (producerMap.ContainsKey(key))
+                {
+                    producerType = producerMap[key];
+                }
+                else
+                {
+                    producerType = new List<IMyPowerProducer>();
+                    producerMap.Add(key, producerType);
+                }
+                producerType.Add(producer);
+            }
+        }
+
+        private bool ProcessGeneralSwitches()
         {
             //if (!ProcessBooleanSwitch(ref mybool, "us")) return false;
 
@@ -266,13 +244,27 @@ namespace GridOps
             }
             return typeString;
         }
-        private void Print(IMyTextSurface surface, String text)
+        public void Config()
         {
-            Echo(text);
-            surface.WriteText($"{text}\n", true);
+            if (_commandLine.Switch("reload"))
+            {
+                props = ReadProperties();
+                ProcessProperties();
+            }
+
+            if (_commandLine.Switch("show"))
+            {
+                Echo("Config is:");
+                foreach (string prop in props.Keys)
+                {
+                    Echo($"{prop}: {props[prop]}");
+                }
+            }
         }
-        private Dictionary<String, String> ReadProperties(string source)
+
+        private Dictionary<String, String> ReadProperties()
         {
+            string source = Me.CustomData;
             Dictionary<String, String> result = new Dictionary<String, String>();
             string[] lines = source.Split('\n');
             string[] pair; foreach (var line in lines)
@@ -289,7 +281,13 @@ namespace GridOps
             }
             return result;
         }
-        public bool ProcessBooleanSwitch(ref bool option, String argName)
+        private void ProcessProperties()
+        {
+            // Configure available text surface if possible
+            SetSurfaceProperty();
+        }
+
+        private bool ProcessBooleanSwitch(ref bool option, String argName)
         {
             if (_commandLine.Switch(argName))
             {
@@ -307,59 +305,68 @@ namespace GridOps
 
             return true;
         }
-
-        private IMyTextSurface ParseSurfaceProperty(string surfaceDef)
+        private void SetSurfaceProperty()
         {
-            string[] fields = surfaceDef.Split(':');
-            IMyTextSurface result = Me.GetSurface(0);
-            string blockName = fields[0];
-            int surfaceIdx = 0;
-            if (fields.Length > 2)
+            textSurface = null;
+            if (props.ContainsKey(PROPERTY_NAME_TEXTSURFACE))
             {
-                Echo($"WARNING: Awaiting max 2 fields, but got {fields.Length}. Ignoring unnecessary fields.");
-            }
+                string[] fields = props[PROPERTY_NAME_TEXTSURFACE].Split(':');
+                string blockName = fields[0];
+                int surfaceIdx = 0;
 
-            if (fields.Length > 1)
-            {
-                try
-                {
-                    surfaceIdx = (int)ParseFloat(fields[1], $"Value of field #2 (display-number) is not a number: {fields[1]}");
-                }
-                catch (Exception ex)
-                {
-                    Echo($"WARNING: {ex.Message}. Using display-nr {surfaceIdx}.");
-                }
-            }
+                if (fields.Length > 2)
+                    Echo($"WARNING: Awaiting max 2 fields, but got {fields.Length}. Ignoring unnecessary fields.");
 
-            IMyEntity ent = GridTerminalSystem.GetBlockWithName(blockName) as IMyEntity;
+                if (fields.Length > 1)
+                {
+                    try
+                    {
+                        surfaceIdx = (int)ParseFloat(fields[1], $"Value of field #2 (display-number) is not a number: {fields[1]}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Echo($"WARNING: {ex.Message}. Using display-nr {surfaceIdx}.");
+                    }
+                }
 
-            if (ent == null)
-            {
-                Echo($"WARNING: '{blockName}' not found on this grid. Using programmable block for output.");
-            }
-            else if (ent is IMyTextSurfaceProvider)
-            {
-                IMyTextSurfaceProvider provider = (IMyTextSurfaceProvider)ent;
-                if (surfaceIdx >= provider.SurfaceCount)
+                IMyEntity ent = GridTerminalSystem.GetBlockWithName(blockName) as IMyEntity;
+
+                if (ent == null)
                 {
-                    Echo($"WARNING: You provided a display-number {surfaceIdx} which '{blockName}' doesn't have (max. {provider.SurfaceCount - 1}). Using display-nr 0 instead.");
-                    surfaceIdx = 0;
+                    Echo($"WARNING: '{blockName}' not found on this grid. Using text-surface from this programmable block.");
                 }
-                result = provider.GetSurface(surfaceIdx);
-            }
-            else if (ent is IMyTextSurface)
-            {
-                if (fields.Length == 2)
+                else if (ent is IMyTextSurfaceProvider)
                 {
-                    Echo($"WARNING: You provided a display-number, but '{blockName}' is not providing multiple displays. Ignoring display-nr.");
+                    IMyTextSurfaceProvider provider = (IMyTextSurfaceProvider)ent;
+                    if (surfaceIdx >= provider.SurfaceCount)
+                    {
+                        Echo($"WARNING: You provided a display-number {surfaceIdx} which '{blockName}' doesn't have (max. {provider.SurfaceCount - 1}). Using display-nr 0 instead.");
+                        surfaceIdx = 0;
+                    }
+                    textSurface = provider.GetSurface(surfaceIdx);
                 }
-                result = (IMyTextSurface)ent;
+                else if (ent is IMyTextSurface)
+                {
+                    if (fields.Length == 2)
+                    {
+                        Echo($"WARNING: You provided a display-number, but '{blockName}' is not providing multiple displays. Ignoring display-nr.");
+                    }
+                    textSurface = (IMyTextSurface)ent;
+                }
+                else
+                {
+                    Echo($"WARNING: '{blockName}' is not valid surface provder. Using text-surface from this programmable block.");
+                }
             }
             else
-            {
-                Echo($"WARNING: '{blockName}' is not valid surface provder. Using programmable block for output.");
-            }
-            return result;
+                Echo($"WARNING: No '{PROPERTY_NAME_TEXTSURFACE}' defined in custom data. Using text-surface from this programmable block.");
+
+            if (textSurface == null)
+                textSurface = Me.GetSurface(0);
+            else
+                Echo($"Using text-surface at: '{props[PROPERTY_NAME_TEXTSURFACE]}'");
+
+            textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
         }
 
         #endregion // GridOps
